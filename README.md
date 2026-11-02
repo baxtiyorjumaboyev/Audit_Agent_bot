@@ -26,7 +26,9 @@ HolliHop CRM'ni har 10 daqiqada tekshiradi va admin xatoliklarini Telegram kanal
 2. Botni kanalga admin qilib qo'shing va kanalga biror xabar yozing.
 3. `python main.py chat-id` buyrug'i kanal ID'sini ko'rsatadi. Uni `TELEGRAM_CHAT_ID` ga yozing.
 4. `python main.py test` bilan ulanishni tekshiring.
-5. `start.bat` faylini ishga tushiring. Oyna ochiq turishi kerak.
+5. `install_autostart.bat` ga ikki marta bosing. Agent shu zahoti va kompyuter har yoqilganda o'zi, oynasiz ishga tushadi.
+   Kompyuter o'chiq bo'lgan paytdagi hisobotlar (oxirgi 3 kun, haftalik 7 kun) yoqilgandan keyin "kechikib yuborildi" belgisi bilan keladi.
+   O'chirish uchun: `uninstall_autostart.bat`.
 
 Birinchi ishga tushganda agent faqat hozirgi holatni saqlaydi. Xatoliklar shundan keyingi o'zgarishlar bo'yicha yuboriladi.
 
