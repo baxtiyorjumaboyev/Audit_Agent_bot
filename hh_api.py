@@ -21,6 +21,9 @@ class HHClient:
         self.key = key
 
     def call(self, method, **params):
+        # Agent faqat o'qiydi: CRM'da hech narsa o'zgartirilmasligi uchun Get* dan boshqa metodlar taqiqlangan
+        if not method.startswith("Get"):
+            raise HHError(f"{method}: ruxsat yo'q, agent faqat ma'lumot o'qiydi")
         query = {}
         for k, v in params.items():
             if v is None:
@@ -44,13 +47,16 @@ class HHClient:
         raise HHError(error)
 
     def paged(self, method, key, **params):
-        items, skip = [], 0
+        items, skip, first = [], 0, None
         while True:
             page = self.call(method, skip=skip, take=self.PAGE, **params).get(key) or []
-            items.extend(page)
-            if not page:
+            # HolliHop ba'zan skip/take'ni e'tiborsiz qoldirib, hammasini bir yo'la qaytaradi
+            if not page or page[0] == first:
                 return items
-            skip += len(page)
+            items.extend(page)
+            if len(page) != self.PAGE:
+                return items
+            first, skip = page[0], skip + len(page)
 
     def groups(self, types, status):
         return self.paged("GetEdUnits", "EdUnits", types=types, statuses=status)
