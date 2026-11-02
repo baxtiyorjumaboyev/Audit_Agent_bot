@@ -8,9 +8,10 @@ Buyruqlar:
     python main.py digest | daily | weekly | absences   hisobotni hozir yuborish
 """
 import logging
+import socket
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, time as dtime, timedelta
 
 import audit
 import config
@@ -23,10 +24,12 @@ log = logging.getLogger("main")
 
 
 def setup_logging():
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        handlers=[logging.FileHandler(config.LOG_PATH, encoding="utf-8"), logging.StreamHandler(sys.stdout)])
+    handlers = [logging.FileHandler(config.LOG_PATH, encoding="utf-8")]
+    if sys.stdout:  # pythonw (yashirin rejim) da konsol yo'q
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        handlers.append(logging.StreamHandler(sys.stdout))
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+                        handlers=handlers)
 
 
 def client():
@@ -48,42 +51,54 @@ def poll(conn, hh):
                       "Bundan keyingi o'zgarishlar nazorat qilinadi.")
 
 
-# ---------- Rejali ishlar ----------
+def late_note(when, late):
+    if not late:
+        return ""
+    return f"\n\n<i>⏰ Kechikib yuborildi: bu {when.strftime('%d.%m %H:%M')} dagi xabar, kompyuter o'chiq edi.</i>"
 
-def job_digest(conn, hh):
-    t = audit.now()
-    if t.strftime("%H:%M") < "13:00":
-        # kecha kechqurun (LATE_LESSON_FROM dan keyin) bo'lgan darslarda kelmaganlar
-        yesterday = t.date() - timedelta(days=1)
-        audit.sync_absences(conn, hh, yesterday)
-        rows = audit.uncontacted_absences(conn, yesterday, late=True)
-        if rows:
-            telegram.send(reports.absence_alert(rows, f"📵 Kecha kechki darsda kelmagan, bog'lanilmagan o'quvchilar ({audit.fmt_date(yesterday)})"))
-            audit.mark_absences_alerted(conn, rows)
+
+# ---------- Rejali ishlar: fn(conn, hh, when, late) ----------
+
+def job_late_absences(conn, hh, when, late):
+    """Kechagi kechki (LATE_LESSON_FROM dan keyingi) darslarda kelmaganlar."""
+    day = when.date() - timedelta(days=1)
+    audit.sync_absences(conn, hh, day)
+    rows = audit.uncontacted_absences(conn, day, late=True)
+    if rows:
+        telegram.send(reports.absence_alert(
+            rows, f"📵 Kechki darsda kelmagan, bog'lanilmagan o'quvchilar ({audit.fmt_date(day)})") + late_note(when, late))
+        audit.mark_absences_alerted(conn, rows)
+
+
+def job_digest(conn, hh, when, late):
     events = conn.execute("SELECT * FROM events WHERE sent=0 ORDER BY ts").fetchall()
-    telegram.send(reports.digest(events, f"⚠️ Admin xatoliklari: {t.strftime('%d.%m.%Y, %H:%M')}", t.date()))
+    text = reports.digest(events, f"⚠️ Admin xatoliklari: {when.strftime('%d.%m.%Y, %H:%M')}", audit.now().date())
+    telegram.send(text + late_note(when, late))
     conn.executemany("UPDATE events SET sent=1 WHERE id=?", [(e["id"],) for e in events])
     conn.commit()
 
 
-def job_daily(conn, hh):
-    day = audit.now().date()
+def job_daily(conn, hh, when, late):
+    day = when.date()
+    if late:
+        audit.sync_absences(conn, hh, day)  # kompyuter o'sha kuni o'chiq bo'lgan bo'lishi mumkin
     events = conn.execute("SELECT * FROM events WHERE substr(ts, 1, 10)=? ORDER BY ts", (day.isoformat(),)).fetchall()
     absences = conn.execute("SELECT * FROM absences WHERE day=? AND pass=1", (day.isoformat(),)).fetchall()
-    telegram.send(reports.daily(events, absences, day, config.ABSENCE_DEADLINE))
+    telegram.send(reports.daily(events, absences, day, config.ABSENCE_DEADLINE) + late_note(when, late))
 
 
-def job_absences(conn, hh):
-    day = audit.now().date()
+def job_absences(conn, hh, when, late):
+    day = when.date()
     audit.sync_absences(conn, hh, day)
     rows = audit.uncontacted_absences(conn, day, late=False)
-    telegram.send(reports.absence_alert(rows, f"📵 Kelmagan o'quvchiga bog'lanilmadi: {audit.fmt_date(day)}, {config.ABSENCE_DEADLINE} holatiga"))
+    telegram.send(reports.absence_alert(
+        rows, f"📵 Kelmagan o'quvchiga bog'lanilmadi: {audit.fmt_date(day)}, {config.ABSENCE_DEADLINE} holatiga")
+        + late_note(when, late))
     audit.mark_absences_alerted(conn, rows)
 
 
-def job_weekly(conn, hh):
-    today = audit.now().date()
-    start, end = reports.week_range(today)
+def job_weekly(conn, hh, when, late):
+    start, end = reports.week_range(when.date())
     prev = start - timedelta(days=7)
 
     def events_between(a, b):
@@ -95,35 +110,67 @@ def job_weekly(conn, hh):
     teacher_groups = conn.execute("SELECT * FROM groups WHERE teacher_changes > 0 AND present=1 "
                                   "ORDER BY teacher_changes DESC").fetchall()
     telegram.send(reports.weekly(events_between(start, end), events_between(prev, start - timedelta(days=1)),
-                                 absences, teacher_groups, start, end))
+                                 absences, teacher_groups, start, end) + late_note(when, late))
 
 
-JOBS = ([(f"digest_{t}", t, None, job_digest) for t in config.DIGEST_TIMES]
+# (nomi, vaqti, hafta kuni yoki None, funksiya). Bir vaqtga to'g'ri kelsa, ro'yxatdagi tartibda bajariladi.
+JOBS = ([("late_absences", config.DIGEST_TIMES[0], None, job_late_absences)]
+        + [(f"digest_{t}", t, None, job_digest) for t in config.DIGEST_TIMES]
         + [("daily", config.DAILY_REPORT_TIME, None, job_daily),
-           ("weekly", config.WEEKLY_REPORT_TIME, config.WEEKLY_REPORT_DAY, job_weekly),
-           ("absences", config.ABSENCE_DEADLINE, None, job_absences)])
-# Bir vaqtga to'g'ri kelsa: avval xatoliklar, keyin hisobot
-JOBS.sort(key=lambda j: (j[1], j[3] is job_weekly))
+           ("absences", config.ABSENCE_DEADLINE, None, job_absences),
+           ("weekly", config.WEEKLY_REPORT_TIME, config.WEEKLY_REPORT_DAY, job_weekly)])
 
 
-def due(conn, name, hhmm, weekday, t):
-    if weekday is not None and t.weekday() != weekday:
-        return False
-    h, m = map(int, hhmm.split(":"))
-    scheduled = t.replace(hour=h, minute=m, second=0, microsecond=0)
-    if not (scheduled <= t < scheduled + timedelta(hours=2)):  # kompyuter o'chiq bo'lsa 2 soat ichida yetkaziladi
-        return False
-    return conn.execute("SELECT 1 FROM jobs WHERE name=? AND day=?", (name, t.date().isoformat())).fetchone() is None
+def mark_done(conn, name, day):
+    conn.execute("INSERT OR IGNORE INTO jobs VALUES(?, ?)", (name, day.isoformat()))
+    conn.commit()
+
+
+def pending_jobs(conn, t):
+    """Vaqti o'tgan, lekin bajarilmagan ishlar, jumladan kompyuter o'chiq bo'lgan paytdagilari ham."""
+    started = datetime.fromisoformat(get_meta(conn, "baseline_done"))
+    due = []
+    for order, (name, hhmm, weekday, fn) in enumerate(JOBS):
+        lookback = 7 if weekday is not None else config.CATCHUP_DAYS
+        for back in range(lookback, -1, -1):
+            day = t.date() - timedelta(days=back)
+            if weekday is not None and day.weekday() != weekday:
+                continue
+            h, m = map(int, hhmm.split(":"))
+            when = datetime.combine(day, dtime(h, m))
+            if started <= when <= t and not conn.execute(
+                    "SELECT 1 FROM jobs WHERE name=? AND day=?", (name, day.isoformat())).fetchone():
+                due.append((when, order, name, fn))
+    due.sort(key=lambda j: (j[0], j[1]))
+    # Xatoliklar ro'yxati har safar barcha yuborilmaganlarni oladi, shuning uchun eng oxirgisi yetarli
+    digests = [j for j in due if j[3] is job_digest]
+    for when, _, name, _ in digests[:-1]:
+        mark_done(conn, name, when.date())
+    return [j for j in due if j[3] is not job_digest or j is digests[-1]]
+
+
+def single_instance():
+    """Agent ikki marta ishga tushib, xabarlar takrorlanmasligi uchun."""
+    lock = socket.socket()
+    try:
+        lock.bind(("127.0.0.1", 47831))
+    except OSError:
+        log.info("Agent allaqachon ishlayapti.")
+        print("Agent allaqachon ishlayapti, bu oynani yopishingiz mumkin.")
+        sys.exit(0)
+    return lock
 
 
 def run():
+    lock = single_instance()  # noqa: F841 (jarayon oxirigacha ushlab turiladi)
     conn, hh = connect(), client()
     last_poll, failures = None, 0
     log.info("Audit agent ishga tushdi. Tekshiruv har %d daqiqada.", config.POLL_MINUTES)
     while True:
         t = audit.now()
-        due_jobs = [j for j in JOBS if due(conn, j[0], j[1], j[2], t)]
-        if last_poll is None or t - last_poll >= timedelta(minutes=config.POLL_MINUTES) or due_jobs:
+        due = pending_jobs(conn, t) if get_meta(conn, "baseline_done") else []
+        if last_poll is None or t - last_poll >= timedelta(minutes=config.POLL_MINUTES) or (
+                due and t - last_poll >= timedelta(minutes=2)):
             try:
                 poll(conn, hh)
                 failures = 0
@@ -136,13 +183,17 @@ def run():
                     except Exception:
                         log.exception("Telegramga yuborib bo'lmadi")
             last_poll = t
-        for name, hhmm, weekday, fn in due_jobs:
+            if not due and get_meta(conn, "baseline_done"):
+                due = pending_jobs(conn, audit.now())
+        for when, _, name, fn in due:
+            late = audit.now() - when > timedelta(minutes=30)
             try:
-                fn(conn, hh)
-                conn.execute("INSERT OR IGNORE INTO jobs VALUES(?, ?)", (name, t.date().isoformat()))
-                conn.commit()
+                fn(conn, hh, when, late)
+                mark_done(conn, name, when.date())
+                log.info("%s bajarildi (%s)%s", name, when, " — kechikib" if late else "")
             except Exception:
-                log.exception("%s bajarilmadi", name)
+                log.exception("%s bajarilmadi, keyinroq qayta urinadi", name)
+                break  # internet hali ulanmagan bo'lishi mumkin; tartib buzilmasligi uchun to'xtaymiz
         time.sleep(20)
 
 
@@ -185,7 +236,8 @@ def main():
             print(f"{e['ts']} [{reports.label(e['type'])}] {e['office']} | {e['assignee']} | {e['group_name']}\n   {e['details']}")
     elif cmd in ("digest", "daily", "weekly", "absences"):
         conn, hh = connect(), client()
-        {"digest": job_digest, "daily": job_daily, "weekly": job_weekly, "absences": job_absences}[cmd](conn, hh)
+        fn = {"digest": job_digest, "daily": job_daily, "weekly": job_weekly, "absences": job_absences}[cmd]
+        fn(conn, hh, audit.now(), False)
     else:
         print(__doc__)
 

@@ -44,6 +44,8 @@ WEEKLY_REPORT_TIME = os.environ.get("WEEKLY_REPORT_TIME", "17:00")
 ABSENCE_DEADLINE = os.environ.get("ABSENCE_DEADLINE", "20:00")
 # Shu vaqtdan keyin boshlangan darslarda kelmaganlar ertasi kuni 12:00 da tekshiriladi
 LATE_LESSON_FROM = os.environ.get("LATE_LESSON_FROM", "18:00")
+# Kompyuter o'chiq bo'lsa, yoqilganda necha kunlik o'tkazib yuborilgan hisobotlar yuboriladi
+CATCHUP_DAYS = _int("CATCHUP_DAYS", 3)
 
 # Qoidalar
 COURSE_MIN_DAYS = _int("COURSE_MIN_DAYS", 350)  # kurs 1 yil (15 kunlik farqqa ruxsat)
