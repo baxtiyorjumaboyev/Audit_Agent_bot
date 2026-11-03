@@ -192,7 +192,7 @@ def substitutions(conn, days):
                 continue
             for day in days:
                 if b <= day <= e and (item.get("Weekdays") or 0) & (1 << day.weekday()):
-                    subs.append({"office": g["office"], "assignee": g["assignee"], "group": g["name"], "day": day,
+                    subs.append({"office": g["office"], "assignee": g["assignee"], "group": g["name"], "group_id": g["id"], "day": day,
                                  "main": names.get(str(main), f"#{main}"), "sub": teacher_list(tids, names),
                                  "time": (item.get("BeginTime") or "")[:5]})
     return subs
@@ -333,7 +333,9 @@ def student_assignees(client, student_id):
 def check_removed(conn, client, old, link, g):
     """O'quvchi guruhdan chiqarilgan bo'lsa (holati "Stopped" yoki o'qish davri qisqartirilgan)."""
     old_end, new_end = parse_date(old["end"]), parse_date(link.get("EndDate"))
-    shortened = new_end is not None and (old_end is None or new_end < old_end)
+    # Davr bir necha kunga surilsa chiqarish emas; o'qish yaqin 30 kunda tugaydigan bo'lsa chiqarilgan hisoblanadi
+    shortened = (new_end is not None and (old_end is None or new_end < old_end)
+                 and new_end <= now().date() + timedelta(days=30))
     if old["status"] == "Stopped" or not (link.get("Status") == "Stopped" or shortened):
         return
     sid = link["StudentClientId"]

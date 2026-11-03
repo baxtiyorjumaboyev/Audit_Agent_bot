@@ -3,11 +3,20 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 import html
 
+import config
 from audit import fmt_date
 
 
 def escape(text):
     return html.escape(text or "", quote=False)
+
+
+def group_link(group_id, name):
+    """Guruh nomi HolliHop'dagi guruh sahifasiga havola bo'lib chiqadi."""
+    name = escape(name)
+    if not group_id:
+        return name
+    return f'<a href="https://{config.HH_DOMAIN}/Learner/Group/{group_id}">{name}</a>'
 
 LABELS = {
     "group_deleted": "🗑 Guruh o'chirildi",
@@ -31,7 +40,7 @@ def daily_control(day, subs, removed):
     for office, items in sorted(by_office.items(), key=lambda x: -len(x[1])):
         lines.append(f"📍 <b>{escape(office)}</b>")
         for s in sorted(items, key=lambda s: s["time"]):
-            lines.append(f"   • «{escape(s['group'])}» {s['time']}: {escape(s['main'])} o'rniga "
+            lines.append(f"   • «{group_link(s['group_id'], s['group'])}» {s['time']}: {escape(s['main'])} o'rniga "
                          f"<b>{escape(s['sub'])}</b> (mas'ul: {escape(s['assignee'])})")
     lines += ["", f"<b>👋 Guruhdan chiqarilgan o'quvchilar: {len(removed)} ta</b>"]
     by_office = defaultdict(list)
@@ -40,7 +49,7 @@ def daily_control(day, subs, removed):
     for office, items in sorted(by_office.items(), key=lambda x: -len(x[1])):
         lines.append(f"📍 <b>{escape(office)}</b>")
         for e in items:
-            lines.append(f"   • «{escape(e['group_name'])}», guruh mas'uli: {escape(e['assignee'])}")
+            lines.append(f"   • «{group_link(e['group_id'], e['group_name'])}», guruh mas'uli: {escape(e['assignee'])}")
             lines.append(f"     {escape(e['details'])}")
     if removed:
         lines += ["", "⚠️ <i>Har bir chiqarilgan o'quvchi kartasida chiqarish sababi (N.B. izohi) va "
@@ -70,7 +79,7 @@ def digest(events, title, today):
         for e in evs:
             lines.append(f"<b>{label(e['type'])}</b>")
             lines.append(f"🕑 {_when(e['ts'], today)} · 👤 {escape(e['assignee'])} (mas'ul)")
-            lines.append(f"👥 Guruh: {escape(e['group_name'] or '')}")
+            lines.append(f"👥 Guruh: {group_link(e['group_id'], e['group_name'])}")
             lines.append(escape(e["details"] or ""))
             lines.append("")
     lines.append("<i>Vaqt: agent xatolikni aniqlagan payt (±10 daqiqa).</i>")
@@ -90,7 +99,7 @@ def absence_alert(rows, title):
             lines.append(f"👤 {escape(admin)} (mas'ul): {len(items)} ta")
             for r in sorted(items, key=lambda r: r["lesson_time"]):
                 lines.append(f"   • {escape(r['student_name'])} (ID: <code>{r['student_id']}</code>), "
-                             f"«{escape(r['group_name'])}» ({r['lesson_time'] or '—'})")
+                             f"«{group_link(r['edunit_id'], r['group_name'])}» ({r['lesson_time'] or '—'})")
         lines.append("")
     return "\n".join(lines)
 
@@ -163,7 +172,7 @@ def weekly(events, prev_events, absences, groups_teacher, start, end, subs=(), r
     if early:
         lines += ["", "<b>⛔ Muddatidan oldin tugatilgan guruhlar:</b>"]
         for e in early:
-            lines.append(f"  • «{escape(e['group_name'])}» ({escape(e['office'])}, {escape(e['assignee'])})")
+            lines.append(f"  • «{group_link(e['group_id'], e['group_name'])}» ({escape(e['office'])}, {escape(e['assignee'])})")
             lines += ["    " + escape(l) for l in (e["details"] or "").split("\n") if l.startswith("•")]
 
     if subs:
@@ -183,7 +192,7 @@ def weekly(events, prev_events, absences, groups_teacher, start, end, subs=(), r
     if groups_teacher:
         lines += ["", "<b>🔄 Ustozi almashtirilgan guruhlar (umumiy son):</b>"]
         for g in groups_teacher[:10]:
-            lines.append(f"  • «{escape(g['name'])}» ({escape(g['office'])}): {g['teacher_changes']} marta")
+            lines.append(f"  • «{group_link(g['id'], g['name'])}» ({escape(g['office'])}): {g['teacher_changes']} marta")
 
     lines += ["", "<b>🎯 XULOSA VA TAVSIYALAR</b>"]
     if not events:
