@@ -169,13 +169,8 @@ def weekly(events, prev_events, absences, groups_teacher, start, end):
     return "\n".join(lines)
 
 
-def morning(day, events, absences, gaps, pending):
+def morning(day, events, absences, pending):
     lines = [f"<b>☀️ Ertalabki hisobot: kecha, {fmt_date(day)}</b>", ""]
-    if gaps:
-        lines.append("<b>💻 Agent ishlamagan vaqtlar</b> (kompyuter o'chiq yoki uxlash rejimida bo'lgan):")
-        for a, b in gaps:
-            lines.append(f"  • {a.strftime('%d.%m %H:%M')} – {b.strftime('%d.%m %H:%M')}")
-        lines += ["  O'tkazib yuborilgan hisobotlar kompyuter yoqilgach yuborildi.", ""]
     lines.append(f"<b>⚠️ Kechagi xatoliklar: {len(events)} ta</b>")
     if events:
         lines += _type_lines(events)

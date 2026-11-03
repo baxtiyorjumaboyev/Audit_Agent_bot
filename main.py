@@ -7,7 +7,6 @@ Buyruqlar:
     python main.py poll       bir marta tekshiruv o'tkazish
     python main.py digest | daily | weekly | absences   hisobotni hozir yuborish
 """
-import json
 import logging
 import socket
 import sys
@@ -46,28 +45,10 @@ def poll(conn, hh):
     audit.sync_groups(conn, hh, baseline)
     audit.sync_links(conn, hh, baseline)
     audit.sync_absences(conn, hh, audit.now().date())
-    track_downtime(conn)
     if baseline:
         set_meta(conn, "baseline_done", audit.now().isoformat(timespec="seconds"))
         telegram.send("🤖 <b>Audit agent ishga tushdi.</b>\nHolliHop'ning hozirgi holati saqlandi. "
                       "Bundan keyingi o'zgarishlar nazorat qilinadi.")
-
-
-def track_downtime(conn):
-    """Agent (kompyuter) ishlamagan oraliqlarni ertalabki hisobot uchun eslab qoladi."""
-    t = audit.now()
-    prev = get_meta(conn, "last_poll_at")
-    if prev and t - datetime.fromisoformat(prev) > timedelta(minutes=3 * config.POLL_MINUTES):
-        gaps = json.loads(get_meta(conn, "downtime") or "[]")[-20:]
-        gaps.append([prev, t.isoformat(timespec="seconds")])
-        set_meta(conn, "downtime", json.dumps(gaps))
-    set_meta(conn, "last_poll_at", t.isoformat(timespec="seconds"))
-
-
-def late_note(when, late):
-    if not late:
-        return ""
-    return f"\n\n<i>⏰ Kechikib yuborildi: bu {when.strftime('%d.%m %H:%M')} dagi xabar, kompyuter o'chiq edi.</i>"
 
 
 # ---------- Rejali ishlar: fn(conn, hh, when, late) ----------
@@ -79,11 +60,8 @@ def job_morning(conn, hh, when, late):
     events = conn.execute("SELECT * FROM events WHERE substr(ts, 1, 10)=? ORDER BY ts",
                           (yesterday.isoformat(),)).fetchall()
     absences = conn.execute("SELECT * FROM absences WHERE day=? AND pass=1", (yesterday.isoformat(),)).fetchall()
-    since = datetime.combine(yesterday, dtime(0, 0))
-    gaps = [(datetime.fromisoformat(a), datetime.fromisoformat(b))
-            for a, b in json.loads(get_meta(conn, "downtime") or "[]") if datetime.fromisoformat(b) >= since]
     pending = conn.execute("SELECT * FROM events WHERE sent=0 ORDER BY ts").fetchall()
-    telegram.send(reports.morning(yesterday, events, absences, gaps, len(pending)))
+    telegram.send(reports.morning(yesterday, events, absences, len(pending)))
     if pending:
         telegram.send(reports.digest(pending, "🌙 Kechqurun va tunda aniqlangan xatoliklar", audit.now().date()))
         conn.executemany("UPDATE events SET sent=1 WHERE id=?", [(e["id"],) for e in pending])
@@ -97,14 +75,14 @@ def job_late_absences(conn, hh, when, late):
     rows = audit.uncontacted_absences(conn, day, late=True)
     if rows:
         telegram.send(reports.absence_alert(
-            rows, f"📵 Kechki darsda kelmagan, bog'lanilmagan o'quvchilar ({audit.fmt_date(day)})") + late_note(when, late))
+            rows, f"📵 Kechki darsda kelmagan, bog'lanilmagan o'quvchilar ({audit.fmt_date(day)})"))
         audit.mark_absences_alerted(conn, rows)
 
 
 def job_digest(conn, hh, when, late):
     events = conn.execute("SELECT * FROM events WHERE sent=0 ORDER BY ts").fetchall()
     text = reports.digest(events, f"⚠️ Admin xatoliklari: {when.strftime('%d.%m.%Y, %H:%M')}", audit.now().date())
-    telegram.send(text + late_note(when, late))
+    telegram.send(text)
     conn.executemany("UPDATE events SET sent=1 WHERE id=?", [(e["id"],) for e in events])
     conn.commit()
 
@@ -115,7 +93,7 @@ def job_daily(conn, hh, when, late):
         audit.sync_absences(conn, hh, day)  # kompyuter o'sha kuni o'chiq bo'lgan bo'lishi mumkin
     events = conn.execute("SELECT * FROM events WHERE substr(ts, 1, 10)=? ORDER BY ts", (day.isoformat(),)).fetchall()
     absences = conn.execute("SELECT * FROM absences WHERE day=? AND pass=1", (day.isoformat(),)).fetchall()
-    telegram.send(reports.daily(events, absences, day, config.ABSENCE_DEADLINE) + late_note(when, late))
+    telegram.send(reports.daily(events, absences, day, config.ABSENCE_DEADLINE))
 
 
 def job_absences(conn, hh, when, late):
@@ -123,8 +101,7 @@ def job_absences(conn, hh, when, late):
     audit.sync_absences(conn, hh, day)
     rows = audit.uncontacted_absences(conn, day, late=False)
     telegram.send(reports.absence_alert(
-        rows, f"📵 Kelmagan o'quvchiga bog'lanilmadi: {audit.fmt_date(day)}, {config.ABSENCE_DEADLINE} holatiga")
-        + late_note(when, late))
+        rows, f"📵 Kelmagan o'quvchiga bog'lanilmadi: {audit.fmt_date(day)}, {config.ABSENCE_DEADLINE} holatiga"))
     audit.mark_absences_alerted(conn, rows)
 
 
@@ -141,7 +118,7 @@ def job_weekly(conn, hh, when, late):
     teacher_groups = conn.execute("SELECT * FROM groups WHERE teacher_changes > 0 AND present=1 "
                                   "ORDER BY teacher_changes DESC").fetchall()
     telegram.send(reports.weekly(events_between(start, end), events_between(prev, start - timedelta(days=1)),
-                                 absences, teacher_groups, start, end) + late_note(when, late))
+                                 absences, teacher_groups, start, end))
 
 
 # (nomi, vaqti, hafta kuni yoki None, funksiya). Bir vaqtga to'g'ri kelsa, ro'yxatdagi tartibda bajariladi.
