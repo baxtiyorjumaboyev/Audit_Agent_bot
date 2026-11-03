@@ -7,6 +7,7 @@ Buyruqlar:
     python main.py poll       bir marta tekshiruv o'tkazish
     python main.py digest | daily | weekly | absences   hisobotni hozir yuborish
 """
+import json
 import logging
 import socket
 import sys
@@ -45,10 +46,22 @@ def poll(conn, hh):
     audit.sync_groups(conn, hh, baseline)
     audit.sync_links(conn, hh, baseline)
     audit.sync_absences(conn, hh, audit.now().date())
+    track_downtime(conn)
     if baseline:
         set_meta(conn, "baseline_done", audit.now().isoformat(timespec="seconds"))
         telegram.send("🤖 <b>Audit agent ishga tushdi.</b>\nHolliHop'ning hozirgi holati saqlandi. "
                       "Bundan keyingi o'zgarishlar nazorat qilinadi.")
+
+
+def track_downtime(conn):
+    """Agent (kompyuter) ishlamagan oraliqlarni ertalabki hisobot uchun eslab qoladi."""
+    t = audit.now()
+    prev = get_meta(conn, "last_poll_at")
+    if prev and t - datetime.fromisoformat(prev) > timedelta(minutes=3 * config.POLL_MINUTES):
+        gaps = json.loads(get_meta(conn, "downtime") or "[]")[-20:]
+        gaps.append([prev, t.isoformat(timespec="seconds")])
+        set_meta(conn, "downtime", json.dumps(gaps))
+    set_meta(conn, "last_poll_at", t.isoformat(timespec="seconds"))
 
 
 def late_note(when, late):
@@ -58,6 +71,24 @@ def late_note(when, late):
 
 
 # ---------- Rejali ishlar: fn(conn, hh, when, late) ----------
+
+def job_morning(conn, hh, when, late):
+    """Kompyuter yoqilgandan keyin birinchi bo'lib: kechagi kun xulosasi va tunda aniqlangan xatoliklar."""
+    yesterday = when.date() - timedelta(days=1)
+    audit.sync_absences(conn, hh, yesterday)
+    events = conn.execute("SELECT * FROM events WHERE substr(ts, 1, 10)=? ORDER BY ts",
+                          (yesterday.isoformat(),)).fetchall()
+    absences = conn.execute("SELECT * FROM absences WHERE day=? AND pass=1", (yesterday.isoformat(),)).fetchall()
+    since = datetime.combine(yesterday, dtime(0, 0))
+    gaps = [(datetime.fromisoformat(a), datetime.fromisoformat(b))
+            for a, b in json.loads(get_meta(conn, "downtime") or "[]") if datetime.fromisoformat(b) >= since]
+    pending = conn.execute("SELECT * FROM events WHERE sent=0 ORDER BY ts").fetchall()
+    telegram.send(reports.morning(yesterday, events, absences, gaps, len(pending)))
+    if pending:
+        telegram.send(reports.digest(pending, "🌙 Kechqurun va tunda aniqlangan xatoliklar", audit.now().date()))
+        conn.executemany("UPDATE events SET sent=1 WHERE id=?", [(e["id"],) for e in pending])
+        conn.commit()
+
 
 def job_late_absences(conn, hh, when, late):
     """Kechagi kechki (LATE_LESSON_FROM dan keyingi) darslarda kelmaganlar."""
@@ -114,7 +145,8 @@ def job_weekly(conn, hh, when, late):
 
 
 # (nomi, vaqti, hafta kuni yoki None, funksiya). Bir vaqtga to'g'ri kelsa, ro'yxatdagi tartibda bajariladi.
-JOBS = ([("late_absences", config.DIGEST_TIMES[0], None, job_late_absences)]
+JOBS = ([("morning", config.MORNING_TIME, None, job_morning),
+         ("late_absences", config.DIGEST_TIMES[0], None, job_late_absences)]
         + [(f"digest_{t}", t, None, job_digest) for t in config.DIGEST_TIMES]
         + [("daily", config.DAILY_REPORT_TIME, None, job_daily),
            ("absences", config.ABSENCE_DEADLINE, None, job_absences),
@@ -142,11 +174,13 @@ def pending_jobs(conn, t):
                     "SELECT 1 FROM jobs WHERE name=? AND day=?", (name, day.isoformat())).fetchone():
                 due.append((when, order, name, fn))
     due.sort(key=lambda j: (j[0], j[1]))
-    # Xatoliklar ro'yxati har safar barcha yuborilmaganlarni oladi, shuning uchun eng oxirgisi yetarli
-    digests = [j for j in due if j[3] is job_digest]
-    for when, _, name, _ in digests[:-1]:
-        mark_done(conn, name, when.date())
-    return [j for j in due if j[3] is not job_digest or j is digests[-1]]
+    # Xatoliklar ro'yxati va ertalabki hisobot har safar eng yangi holatni oladi, shuning uchun oxirgisi yetarli
+    for fn in (job_digest, job_morning):
+        same = [j for j in due if j[3] is fn]
+        for j in same[:-1]:
+            mark_done(conn, j[2], j[0].date())
+            due.remove(j)
+    return due
 
 
 def single_instance():
@@ -234,9 +268,10 @@ def main():
         poll(conn, client())
         for e in conn.execute("SELECT * FROM events WHERE sent=0 ORDER BY ts"):
             print(f"{e['ts']} [{reports.label(e['type'])}] {e['office']} | {e['assignee']} | {e['group_name']}\n   {e['details']}")
-    elif cmd in ("digest", "daily", "weekly", "absences"):
+    elif cmd in ("digest", "daily", "weekly", "absences", "morning"):
         conn, hh = connect(), client()
-        fn = {"digest": job_digest, "daily": job_daily, "weekly": job_weekly, "absences": job_absences}[cmd]
+        fn = {"digest": job_digest, "daily": job_daily, "weekly": job_weekly, "absences": job_absences,
+              "morning": job_morning}[cmd]
         fn(conn, hh, audit.now(), False)
     else:
         print(__doc__)

@@ -37,6 +37,8 @@ DRY_RUN = os.environ.get("DRY_RUN", "0") == "1"  # 1 = Telegramga yubormay, ekra
 # Vaqt (O'zbekiston UTC+5)
 TZ = timezone(timedelta(hours=_int("TZ_OFFSET_HOURS", 5)))
 POLL_MINUTES = _int("POLL_MINUTES", 10)
+# Shu vaqtdan keyin kompyuter birinchi yoqilganda ertalabki hisobot yuboriladi
+MORNING_TIME = os.environ.get("MORNING_TIME", "06:00")
 DIGEST_TIMES = [t.strip() for t in os.environ.get("DIGEST_TIMES", "12:00,17:00").split(",") if t.strip()]
 DAILY_REPORT_TIME = os.environ.get("DAILY_REPORT_TIME", "18:00")
 WEEKLY_REPORT_DAY = _int("WEEKLY_REPORT_DAY", 5)  # 0=Dushanba ... 5=Shanba

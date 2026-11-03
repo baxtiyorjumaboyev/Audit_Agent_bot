@@ -168,6 +168,32 @@ def weekly(events, prev_events, absences, groups_teacher, start, end):
     return "\n".join(lines)
 
 
+def morning(day, events, absences, gaps, pending):
+    lines = [f"<b>☀️ Ertalabki hisobot: kecha, {fmt_date(day)}</b>", ""]
+    if gaps:
+        lines.append("<b>💻 Agent ishlamagan vaqtlar</b> (kompyuter o'chiq yoki uxlash rejimida bo'lgan):")
+        for a, b in gaps:
+            lines.append(f"  • {a.strftime('%d.%m %H:%M')} – {b.strftime('%d.%m %H:%M')}")
+        lines += ["  O'tkazib yuborilgan hisobotlar kompyuter yoqilgach yuborildi.", ""]
+    lines.append(f"<b>⚠️ Kechagi xatoliklar: {len(events)} ta</b>")
+    if events:
+        lines += _type_lines(events)
+        for office, n in Counter(e["office"] for e in events).most_common(5):
+            admins = Counter(e["assignee"] for e in events if e["office"] == office)
+            lines.append(f"  📍 {escape(office)}: {n} ta (" + ", ".join(f"{escape(a)}: {c}" for a, c in admins.most_common(3)) + ")")
+    total = len(absences)
+    done = sum(1 for r in absences if (r["description"] or "").strip())
+    lines += ["", f"<b>📵 Kecha kelmaganlar: {total} ta</b>"]
+    if total:
+        lines.append(f"  ✅ Bog'lanilgan: {done} ({round(100 * done / total)}%) · ❌ Bog'lanilmagan: {total - done}")
+        worst = sorted(((o, t - d) for o, (t, d) in _absence_stats(absences).items() if t - d), key=lambda x: -x[1])[:5]
+        if worst:
+            lines.append("  Eng ko'p bog'lanilmagan: " + ", ".join(f"{escape(o)} ({n})" for o, n in worst))
+    lines += ["", f"🌙 Kechqurun va tunda aniqlangan yangi xatoliklar: <b>{pending}</b> ta"
+              + (" (ro'yxati keyingi xabarda)" if pending else "")]
+    return "\n".join(lines)
+
+
 def week_range(today):
     """Yakshanbadan shanbagacha bo'lgan joriy hafta."""
     start = today - timedelta(days=(today.weekday() + 1) % 7)

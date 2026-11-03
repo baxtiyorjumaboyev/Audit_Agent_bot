@@ -154,15 +154,51 @@ def check_group_changes(conn, client, old, g, today):
                             f"Jami {months((end - begin).days)} oy, 1 yil bo'lishi kerak edi.\n"
                             f"Sabab tahlili:\n{explain_early_end(client, g)}")
 
-    old_cur, new_cur = set(json.loads(old["current_teachers"] or "[]")), set(json.loads(g["current_teachers"]))
-    old_all, new_all = set(json.loads(old["teacher_ids"] or "[]")), set(json.loads(g["teacher_ids"]))
-    if (old_cur and new_cur and old_cur != new_cur) or (old_all and new_all - old_all):
-        names = {**json.loads(old["teacher_names"] or "{}"), **json.loads(g["teacher_names"])}
+    check_teacher_changes(conn, old, g, today)
+
+
+def main_teacher(items):
+    """Guruhda eng ko'p dars o'tgan (o'tadigan) ustoz, ya'ni asosiy ustoz."""
+    weight = {}
+    for item in items:
+        b = parse_date(item.get("BeginDate"))
+        if not b:
+            continue
+        e = min(parse_date(item.get("EndDate")) or b + timedelta(days=400), b + timedelta(days=400))
+        lessons = count_lessons([item], b, e + timedelta(days=1))
+        for tid in item.get("TeacherIds") or []:
+            weight[tid] = weight.get(tid, 0) + lessons
+    return max(weight, key=weight.get) if weight else None
+
+
+def check_teacher_changes(conn, old, g, today):
+    """Jadvalga yangi qo'shilgan (yoki ustozi o'zgartirilgan) qatorlarni asosiy ustoz bilan solishtiradi.
+    Zamena tugab, asosiy ustoz qaytishi xato hisoblanmaydi, chunki bunda yangi qator paydo bo'lmaydi."""
+    old_items = {i.get("Id"): i for i in json.loads(old["schedule"] or "[]")}
+    main = main_teacher(list(old_items.values()))
+    if main is None:
+        return
+    names = {**json.loads(old["teacher_names"] or "{}"), **json.loads(g["teacher_names"])}
+    main_name = names.get(str(main), f"#{main}")
+    lines = []
+    for item in json.loads(g["schedule"]):
+        tids = set(item.get("TeacherIds") or [])
+        prev = old_items.get(item.get("Id"))
+        if not tids or tids == {main} or (prev is not None and set(prev.get("TeacherIds") or []) == tids):
+            continue
+        b, e = parse_date(item.get("BeginDate")), parse_date(item.get("EndDate"))
+        if e and e < today - timedelta(days=7):
+            continue  # eski o'tib ketgan jadvalni tahrirlash
+        who = teacher_list(tids, names)
+        if b and e and (e - b).days <= 14:
+            when = fmt_date(b) if b == e else f"{fmt_date(b)} – {fmt_date(e)}"
+            lines.append(f"Zamena: {when} kuni darsni asosiy ustoz {main_name} o'rniga {who} o'tadi.")
+        else:
+            lines.append(f"Asosiy ustoz almashtirildi: {main_name} → {who} ({fmt_date(b)} dan).")
+    if lines:
         g["teacher_changes"] = (old["teacher_changes"] or 0) + 1
-        new_ids = new_cur if new_cur != old_cur else new_all - old_all
         event_for_group(conn, "teacher_changed", g,
-                        f"Ustoz: {teacher_list(old_cur or old_all, names)} → {teacher_list(new_ids, names)}. "
-                        f"Bu guruhda ustoz {g['teacher_changes']}-marta almashtirilmoqda.")
+                        "\n".join(lines) + f"\nAgent kuzatgan davrda bu guruhda {g['teacher_changes']}-marta.")
 
 
 def sync_groups(conn, client, baseline):
