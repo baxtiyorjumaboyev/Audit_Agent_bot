@@ -9,6 +9,8 @@ from hh_api import HHError
 log = logging.getLogger("audit")
 
 STATUSES = ["Reserve", "Forming", "Working", "Stopped", "Finished"]
+# Xato emas, ma'lumot uchun: xatoliklar soni va reytingga qo'shilmaydi
+ERRORS_ONLY = "type != 'student_removed'"
 ENDED = {"Stopped", "Finished"}
 STATUS_UZ = {
     "Reserve": "Zaxira", "Forming": "Shakllanmoqda", "Working": "O'qimoqda",
@@ -171,6 +173,31 @@ def main_teacher(items):
     return max(weight, key=weight.get) if weight else None
 
 
+SUB_MAX_DAYS = 14  # bundan qisqa muddatga boshqa ustozga berilgan dars zamena hisoblanadi
+
+
+def substitutions(conn, days):
+    """Berilgan kunlarda asosiy ustoz o'rniga boshqa ustoz dars o'tgan (o'tadigan) guruhlar."""
+    subs = []
+    for g in conn.execute("SELECT * FROM groups WHERE present=1 AND status IN ('Working', 'Forming')"):
+        items = json.loads(g["schedule"] or "[]")
+        main = main_teacher(items)
+        if main is None:
+            continue
+        names = json.loads(g["teacher_names"] or "{}")
+        for item in items:
+            b, e = parse_date(item.get("BeginDate")), parse_date(item.get("EndDate"))
+            tids = set(item.get("TeacherIds") or [])
+            if not b or not e or not tids or tids == {main} or (e - b).days > SUB_MAX_DAYS:
+                continue
+            for day in days:
+                if b <= day <= e and (item.get("Weekdays") or 0) & (1 << day.weekday()):
+                    subs.append({"office": g["office"], "assignee": g["assignee"], "group": g["name"], "day": day,
+                                 "main": names.get(str(main), f"#{main}"), "sub": teacher_list(tids, names),
+                                 "time": (item.get("BeginTime") or "")[:5]})
+    return subs
+
+
 def check_teacher_changes(conn, old, g, today):
     """Jadvalga yangi qo'shilgan (yoki ustozi o'zgartirilgan) qatorlarni asosiy ustoz bilan solishtiradi.
     Zamena tugab, asosiy ustoz qaytishi xato hisoblanmaydi, chunki bunda yangi qator paydo bo'lmaydi."""
@@ -295,19 +322,57 @@ def check_new_link(conn, client, link, g):
                     "O'quvchi oldin boshqa guruhda o'qimagan, ya'ni yangi o'quvchi.")
 
 
+def student_assignees(client, student_id):
+    try:
+        students = client.call("GetStudents", clientId=student_id).get("Students") or []
+    except HHError:
+        return "—"
+    return ", ".join(a.get("FullName", "") for s in students for a in s.get("Assignees") or []) or "—"
+
+
+def check_removed(conn, client, old, link, g):
+    """O'quvchi guruhdan chiqarilgan bo'lsa (holati "Stopped" yoki o'qish davri qisqartirilgan)."""
+    old_end, new_end = parse_date(old["end"]), parse_date(link.get("EndDate"))
+    shortened = new_end is not None and (old_end is None or new_end < old_end)
+    if old["status"] == "Stopped" or not (link.get("Status") == "Stopped" or shortened):
+        return
+    sid = link["StudentClientId"]
+    try:
+        active = client.ed_unit_students(studentClientId=sid, statuses="Normal")
+    except HHError:
+        active = []
+    if any(a.get("EdUnitId") != link["EdUnitId"] and a.get("EdUnitType") in config.GROUP_TYPES for a in active):
+        return  # boshqa guruhga ko'chirilgan
+    period = f"{fmt_date(parse_date(link.get('BeginDate')))} – {fmt_date(new_end)}"
+    if shortened and old_end:
+        period += f" (avval {fmt_date(old_end)} gacha edi)"
+    add_event(conn, "student_removed", link.get("EdUnitOfficeOrCompanyName") or (g["office"] if g else ""),
+              g["assignee"] if g else "Mas'ul ko'rsatilmagan", link["EdUnitId"], link.get("EdUnitName") or "",
+              f"O'quvchi: {link.get('StudentName') or '—'} (ID: {sid}). O'qish davri: {period}. "
+              f"O'quvchi mas'uli: {student_assignees(client, sid)}.", sent=1)
+
+
 def sync_links(conn, client, baseline):
     today = now().date()
     links = client.ed_unit_students(edUnitTypes=config.GROUP_TYPES,
                                     dateFrom=(today - timedelta(days=30)).isoformat(),
                                     dateTo=(today + timedelta(days=60)).isoformat())
-    known = {(r[0], r[1]) for r in conn.execute("SELECT edunit_id, student_id FROM links")}
+    known = {(r["edunit_id"], r["student_id"]): r for r in conn.execute("SELECT * FROM links")}
     groups = {r["id"]: r for r in conn.execute("SELECT * FROM groups")}
     stamp = now().isoformat(timespec="seconds")
     for link in links:
         key = (link.get("EdUnitId"), link.get("StudentClientId"))
-        if None in key or key in known:
+        if None in key:
             continue
-        known.add(key)
+        old = known.get(key)
+        if old is not None:
+            if old["status"] != link.get("Status") or old["end"] != link.get("EndDate"):
+                if not baseline:
+                    check_removed(conn, client, old, link, groups.get(key[0]))
+                conn.execute("UPDATE links SET status=?, end=? WHERE edunit_id=? AND student_id=?",
+                             (link.get("Status"), link.get("EndDate"), key[0], key[1]))
+            continue
+        known[key] = {"status": link.get("Status"), "end": link.get("EndDate")}
         conn.execute("INSERT OR IGNORE INTO links VALUES(?, ?, ?, ?, ?, ?, ?)",
                      (key[0], key[1], link.get("StudentName"), link.get("BeginDate"), link.get("EndDate"),
                       link.get("Status"), stamp))

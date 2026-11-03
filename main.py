@@ -57,7 +57,7 @@ def job_morning(conn, hh, when, late):
     """Kompyuter yoqilgandan keyin birinchi bo'lib: kechagi kun xulosasi va tunda aniqlangan xatoliklar."""
     yesterday = when.date() - timedelta(days=1)
     audit.sync_absences(conn, hh, yesterday)
-    events = conn.execute("SELECT * FROM events WHERE substr(ts, 1, 10)=? ORDER BY ts",
+    events = conn.execute(f"SELECT * FROM events WHERE substr(ts, 1, 10)=? AND {audit.ERRORS_ONLY} ORDER BY ts",
                           (yesterday.isoformat(),)).fetchall()
     absences = conn.execute("SELECT * FROM absences WHERE day=? AND pass=1", (yesterday.isoformat(),)).fetchall()
     pending = conn.execute("SELECT * FROM events WHERE sent=0 ORDER BY ts").fetchall()
@@ -96,9 +96,13 @@ def job_daily(conn, hh, when, late):
     day = when.date()
     if late:
         audit.sync_absences(conn, hh, day)  # kompyuter o'sha kuni o'chiq bo'lgan bo'lishi mumkin
-    events = conn.execute("SELECT * FROM events WHERE substr(ts, 1, 10)=? ORDER BY ts", (day.isoformat(),)).fetchall()
+    events = conn.execute(f"SELECT * FROM events WHERE substr(ts, 1, 10)=? AND {audit.ERRORS_ONLY} ORDER BY ts",
+                          (day.isoformat(),)).fetchall()
     absences = conn.execute("SELECT * FROM absences WHERE day=? AND pass=1", (day.isoformat(),)).fetchall()
     telegram.send(reports.daily(events, absences, day, config.ABSENCE_DEADLINE))
+    removed = conn.execute("SELECT * FROM events WHERE substr(ts, 1, 10)=? AND type='student_removed' ORDER BY ts",
+                           (day.isoformat(),)).fetchall()
+    telegram.send(reports.daily_control(day, audit.substitutions(conn, [day]), removed))
 
 
 def job_absences(conn, hh, when, late):
@@ -115,16 +119,18 @@ def job_weekly(conn, hh, when, late):
     start, end = reports.week_range(when.date())
     prev = start - timedelta(days=7)
 
-    def events_between(a, b):
-        return conn.execute("SELECT * FROM events WHERE substr(ts, 1, 10) BETWEEN ? AND ? ORDER BY ts",
+    def events_between(a, b, where=audit.ERRORS_ONLY):
+        return conn.execute(f"SELECT * FROM events WHERE substr(ts, 1, 10) BETWEEN ? AND ? AND {where} ORDER BY ts",
                             (a.isoformat(), b.isoformat())).fetchall()
 
     absences = conn.execute("SELECT * FROM absences WHERE day BETWEEN ? AND ? AND pass=1",
                             (start.isoformat(), end.isoformat())).fetchall()
     teacher_groups = conn.execute("SELECT * FROM groups WHERE teacher_changes > 0 AND present=1 "
                                   "ORDER BY teacher_changes DESC").fetchall()
+    week_days = [start + timedelta(days=i) for i in range((min(end, when.date()) - start).days + 1)]
     telegram.send(reports.weekly(events_between(start, end), events_between(prev, start - timedelta(days=1)),
-                                 absences, teacher_groups, start, end))
+                                 absences, teacher_groups, start, end, audit.substitutions(conn, week_days),
+                                 events_between(start, end, "type='student_removed'")))
 
 
 # (nomi, vaqti, hafta kuni yoki None, funksiya). Bir vaqtga to'g'ri kelsa, ro'yxatdagi tartibda bajariladi.

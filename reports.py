@@ -17,7 +17,35 @@ LABELS = {
     "late_join": "🚫 Yangi o'quvchi boshlangan guruhga qo'shildi",
     "teacher_changed": "🔄 Guruh ustozi almashtirildi",
     "absent_no_contact": "📵 Kelmagan o'quvchiga bog'lanilmadi",
+    "student_removed": "👋 O'quvchi guruhdan chiqarildi",
 }
+
+
+def daily_control(day, subs, removed):
+    """Zamenalar va guruhdan chiqarilgan o'quvchilar ro'yxati."""
+    lines = [f"<b>📋 Kunlik nazorat: {fmt_date(day)}</b>", ""]
+    lines.append(f"<b>🔁 Zamenalar (asosiy ustoz o'rniga boshqa ustoz): {len(subs)} ta</b>")
+    by_office = defaultdict(list)
+    for s in subs:
+        by_office[s["office"]].append(s)
+    for office, items in sorted(by_office.items(), key=lambda x: -len(x[1])):
+        lines.append(f"📍 <b>{escape(office)}</b>")
+        for s in sorted(items, key=lambda s: s["time"]):
+            lines.append(f"   • «{escape(s['group'])}» {s['time']}: {escape(s['main'])} o'rniga "
+                         f"<b>{escape(s['sub'])}</b> (mas'ul: {escape(s['assignee'])})")
+    lines += ["", f"<b>👋 Guruhdan chiqarilgan o'quvchilar: {len(removed)} ta</b>"]
+    by_office = defaultdict(list)
+    for e in removed:
+        by_office[e["office"]].append(e)
+    for office, items in sorted(by_office.items(), key=lambda x: -len(x[1])):
+        lines.append(f"📍 <b>{escape(office)}</b>")
+        for e in items:
+            lines.append(f"   • «{escape(e['group_name'])}», guruh mas'uli: {escape(e['assignee'])}")
+            lines.append(f"     {escape(e['details'])}")
+    if removed:
+        lines += ["", "⚠️ <i>Har bir chiqarilgan o'quvchi kartasida chiqarish sababi (N.B. izohi) va "
+                      "aloqaga chiqish eslatmasi (zadacha) qo'yilganini tekshiring.</i>"]
+    return "\n".join(lines)
 
 
 def label(type_):
@@ -104,7 +132,7 @@ def daily(events, absences, day, deadline):
     return "\n".join(lines)
 
 
-def weekly(events, prev_events, absences, groups_teacher, start, end):
+def weekly(events, prev_events, absences, groups_teacher, start, end, subs=(), removed=()):
     lines = [f"<b>📈 HAFTALIK HISOBOT: {fmt_date(start)} – {fmt_date(end)}</b>", ""]
     diff = len(events) - len(prev_events)
     trend = f"▲ +{diff}" if diff > 0 else (f"▼ {diff}" if diff < 0 else "o'zgarmagan")
@@ -137,6 +165,20 @@ def weekly(events, prev_events, absences, groups_teacher, start, end):
         for e in early:
             lines.append(f"  • «{escape(e['group_name'])}» ({escape(e['office'])}, {escape(e['assignee'])})")
             lines += ["    " + escape(l) for l in (e["details"] or "").split("\n") if l.startswith("•")]
+
+    if subs:
+        lines += ["", f"<b>🔁 Hafta davomida zamenalar: {len(subs)} ta dars</b>"]
+        for office, n in Counter(s["office"] for s in subs).most_common():
+            lines.append(f"  {escape(office)}: {n} ta")
+        top = [(g, n) for g, n in Counter((s["group"], s["office"]) for s in subs).most_common(5) if n >= 2]
+        if top:
+            lines.append("  Eng ko'p zamena bo'lgan guruhlar: "
+                         + ", ".join(f"«{escape(g)}» ({escape(o)}) ×{n}" for (g, o), n in top))
+
+    if removed:
+        lines += ["", f"<b>👋 Guruhdan chiqarilgan o'quvchilar: {len(removed)} ta</b>"]
+        for office, n in Counter(e["office"] for e in removed).most_common():
+            lines.append(f"  {escape(office)}: {n} ta")
 
     if groups_teacher:
         lines += ["", "<b>🔄 Ustozi almashtirilgan guruhlar (umumiy son):</b>"]
