@@ -64,6 +64,8 @@ def job_morning(conn, hh, when, late):
     telegram.send(reports.morning(yesterday, events, absences, len(pending)))
     if pending:
         telegram.send(reports.digest(pending, "🌙 Kechqurun va tunda aniqlangan xatoliklar", audit.now().date()))
+        telegram.send_to_branches(pending, lambda office, evs: reports.digest(
+            evs, f"🌙 {office} filiali: kechqurun va tunda aniqlangan xatoliklar", audit.now().date()))
         conn.executemany("UPDATE events SET sent=1 WHERE id=?", [(e["id"],) for e in pending])
         conn.commit()
 
@@ -74,15 +76,18 @@ def job_late_absences(conn, hh, when, late):
     audit.sync_absences(conn, hh, day)
     rows = audit.uncontacted_absences(conn, day, late=True)
     if rows:
-        telegram.send(reports.absence_alert(
-            rows, f"📵 Kechki darsda kelmagan, bog'lanilmagan o'quvchilar ({audit.fmt_date(day)})"))
+        title = f"Kechki darsda kelmagan, bog'lanilmagan o'quvchilar ({audit.fmt_date(day)})"
+        telegram.send(reports.absence_alert(rows, f"📵 {title}"))
+        telegram.send_to_branches(rows, lambda office, r: reports.absence_alert(r, f"📵 {office} filiali: {title}"))
         audit.mark_absences_alerted(conn, rows)
 
 
 def job_digest(conn, hh, when, late):
     events = conn.execute("SELECT * FROM events WHERE sent=0 ORDER BY ts").fetchall()
-    text = reports.digest(events, f"⚠️ Admin xatoliklari: {when.strftime('%d.%m.%Y, %H:%M')}", audit.now().date())
-    telegram.send(text)
+    stamp = when.strftime('%d.%m.%Y, %H:%M')
+    telegram.send(reports.digest(events, f"⚠️ Admin xatoliklari: {stamp}", audit.now().date()))
+    telegram.send_to_branches(events, lambda office, evs: reports.digest(
+        evs, f"⚠️ {office} filiali: xatoliklar ({stamp})", audit.now().date()))
     conn.executemany("UPDATE events SET sent=1 WHERE id=?", [(e["id"],) for e in events])
     conn.commit()
 
@@ -100,8 +105,9 @@ def job_absences(conn, hh, when, late):
     day = when.date()
     audit.sync_absences(conn, hh, day)
     rows = audit.uncontacted_absences(conn, day, late=False)
-    telegram.send(reports.absence_alert(
-        rows, f"📵 Kelmagan o'quvchiga bog'lanilmadi: {audit.fmt_date(day)}, {config.ABSENCE_DEADLINE} holatiga"))
+    title = f"Kelmagan o'quvchiga bog'lanilmadi: {audit.fmt_date(day)}, {config.ABSENCE_DEADLINE} holatiga"
+    telegram.send(reports.absence_alert(rows, f"📵 {title}"))
+    telegram.send_to_branches(rows, lambda office, r: reports.absence_alert(r, f"📵 {office} filiali: {title}"))
     audit.mark_absences_alerted(conn, rows)
 
 

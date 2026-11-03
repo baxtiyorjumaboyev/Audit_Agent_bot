@@ -32,14 +32,35 @@ def _chunks(text):
         yield chunk
 
 
-def send(text):
+def send(text, chat_id=None, thread_id=None):
+    chat_id = chat_id or config.TELEGRAM_CHAT_ID
     if config.DRY_RUN:
-        print("\n----- TELEGRAM (DRY_RUN) -----\n" + text + "\n------------------------------")
+        print(f"\n----- TELEGRAM (DRY_RUN) → {chat_id} / {thread_id} -----\n" + text + "\n------------------------------")
         return
+    extra = {"message_thread_id": thread_id} if thread_id else {}
     for part in _chunks(text):
-        _api("sendMessage", chat_id=config.TELEGRAM_CHAT_ID, text=part,
-             parse_mode="HTML", disable_web_page_preview="true")
-    log.info("Telegramga yuborildi (%d belgi)", len(text))
+        _api("sendMessage", chat_id=chat_id, text=part, parse_mode="HTML", disable_web_page_preview="true", **extra)
+    log.info("Telegramga yuborildi → %s/%s (%d belgi)", chat_id, thread_id or "-", len(text))
+
+
+def send_to_branches(items, build):
+    """Har bir filial xatolarini "Robbit | TEAM" guruhidagi o'sha filial mavzusiga yuboradi.
+    items: office maydoni bor yozuvlar; build(office, office_items) -> matn."""
+    if not config.TEAM_CHAT_ID:
+        return
+    by_office = {}
+    for item in items:
+        by_office.setdefault(item["office"], []).append(item)
+    for office, office_items in by_office.items():
+        thread = config.BRANCH_TOPICS.get(office)
+        if thread is None:
+            log.info("%s filiali uchun mavzu sozlanmagan, yuborilmadi", office)
+            continue
+        try:
+            send(build(office, office_items), chat_id=config.TEAM_CHAT_ID, thread_id=thread)
+        except Exception:
+            # Asosiy kanalga allaqachon ketgan, shuning uchun ish qayta bajarilmaydi
+            log.exception("%s filiali mavzusiga yuborib bo'lmadi", office)
 
 
 def find_chats():

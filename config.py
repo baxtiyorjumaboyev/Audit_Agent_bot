@@ -1,4 +1,5 @@
 """Sozlamalar: .env fayldan o'qiladi."""
+import json
 import os
 from datetime import timedelta, timezone
 from pathlib import Path
@@ -33,6 +34,17 @@ GROUP_TYPES = os.environ.get("GROUP_TYPES", "Group")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 DRY_RUN = os.environ.get("DRY_RUN", "0") == "1"  # 1 = Telegramga yubormay, ekranga chiqarish
+
+
+def _branches(path):
+    """branches.json: "Robbit | TEAM" guruhi ID'si va HolliHop filiali → Telegram mavzusi ID'si."""
+    if not path.exists():
+        return "", {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return str(data.get("team_chat_id") or ""), {k: int(v) for k, v in (data.get("offices") or {}).items() if v}
+
+
+TEAM_CHAT_ID, BRANCH_TOPICS = _branches(BASE_DIR / "branches.json")
 
 # Vaqt (O'zbekiston UTC+5)
 TZ = timezone(timedelta(hours=_int("TZ_OFFSET_HOURS", 5)))
