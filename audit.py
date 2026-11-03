@@ -289,7 +289,7 @@ def check_new_link(conn, client, link, g):
     if transferred:
         return  # boshqa guruhdan ko'chirilgan bo'lsa, bu xato emas
     event_for_group(conn, "late_join", g,
-                    f"O'quvchi: {link.get('StudentName') or link['StudentClientId']}. "
+                    f"O'quvchi: {link.get('StudentName') or '—'} (ID: {link['StudentClientId']}). "
                     f"Guruh {fmt_date(parse_date(g['begin']))} da boshlangan, o'quvchi {fmt_date(start)} dan qo'shildi. "
                     f"Bu vaqtgacha {held} ta dars o'tilgan (ruxsat: {config.MAX_LESSONS_FOR_NEW_STUDENT} tagacha). "
                     "O'quvchi oldin boshqa guruhda o'qimagan, ya'ni yangi o'quvchi.")
@@ -361,7 +361,7 @@ def uncontacted_absences(conn, day, late):
 def mark_absences_alerted(conn, rows):
     for r in rows:
         add_event(conn, "absent_no_contact", r["office"], r["assignee"], r["edunit_id"], r["group_name"],
-                  f"O'quvchi: {r['student_name']}, dars: {fmt_date(parse_date(r['day']))} {r['lesson_time']}. "
+                  f"O'quvchi: {r['student_name']} (ID: {r['student_id']}), dars: {fmt_date(parse_date(r['day']))} {r['lesson_time']}. "
                   "Bog'lanib, sababi izohga yozilmagan.", sent=1)
         conn.execute("UPDATE absences SET alerted=1 WHERE edunit_id=? AND student_id=? AND day=?",
                      (r["edunit_id"], r["student_id"], r["day"]))

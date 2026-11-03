@@ -61,7 +61,8 @@ def absence_alert(rows, title):
         for admin, items in admins.items():
             lines.append(f"👤 {escape(admin)} (mas'ul): {len(items)} ta")
             for r in sorted(items, key=lambda r: r["lesson_time"]):
-                lines.append(f"   • {escape(r['student_name'])}, «{escape(r['group_name'])}» ({r['lesson_time'] or '—'})")
+                lines.append(f"   • {escape(r['student_name'])} (ID: <code>{r['student_id']}</code>), "
+                             f"«{escape(r['group_name'])}» ({r['lesson_time'] or '—'})")
         lines.append("")
     return "\n".join(lines)
 
