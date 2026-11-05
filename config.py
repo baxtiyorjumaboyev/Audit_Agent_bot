@@ -33,6 +33,9 @@ GROUP_TYPES = os.environ.get("GROUP_TYPES", "Group")
 # Telegram
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+# Xatoliklar "Robbit | TEAM" guruhining General mavzusiga RND bot orqali boradi; sozlanmagan bo'lsa asosiy kanalga
+TEAM_BOT_TOKEN = os.environ.get("TEAM_BOT_TOKEN", "")
+TEAM_GROUP_ID = os.environ.get("TEAM_GROUP_ID", "")
 DRY_RUN = os.environ.get("DRY_RUN", "0") == "1"  # 1 = Telegramga yubormay, ekranga chiqarish
 
 

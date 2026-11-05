@@ -72,7 +72,7 @@ def digest(events, title, today):
     by_office = defaultdict(list)
     for e in events:
         by_office[e["office"]].append(e)
-    lines = [f"<b>{escape(title)}</b>", f"Jami: <b>{len(events)}</b> ta xatolik", ""]
+    lines = []  # sarlavhasiz: xabar to'g'ridan-to'g'ri umumiy guruhga uzatiladi
     for office, evs in sorted(by_office.items(), key=lambda x: -len(x[1])):
         lines.append(f"📍 <b>{escape(office)}</b>: {len(evs)} ta")
         lines.append("")
@@ -82,8 +82,7 @@ def digest(events, title, today):
             lines.append(f"👥 Guruh: {group_link(e['group_id'], e['group_name'])}")
             lines.append(escape(e["details"] or ""))
             lines.append("")
-    lines.append("<i>Vaqt: agent xatolikni aniqlagan payt (±10 daqiqa).</i>")
-    return "\n".join(lines)
+    return "\n".join(lines).strip()
 
 
 def absence_alert(rows, title):
